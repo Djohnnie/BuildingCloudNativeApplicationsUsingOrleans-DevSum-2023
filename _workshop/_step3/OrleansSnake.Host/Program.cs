@@ -33,16 +33,7 @@ builder.Services.AddHostedService<TickerWorker>();
 // Orleans Hosting
 builder.Host.UseOrleans((hostBuilder, siloBuilder) =>
 {
-    var azureStorageConnectionString = hostBuilder.Configuration.GetValue<string>("AZURE_STORAGE_CONNECTION_STRING");
-
-#if DEBUG
     siloBuilder.UseLocalhostClustering(siloPort: 11112, gatewayPort: 30001, primarySiloEndpoint: new IPEndPoint(IPAddress.Loopback, 11112), serviceId: "orleans-snake-host", clusterId: "orleans-snake-host");
-#else
-    siloBuilder.UseAzureStorageClustering(options =>
-    {
-        options.ConfigureTableServiceClient(azureStorageConnectionString);
-    });
-#endif
 
     siloBuilder.Configure<ClusterOptions>(options =>
     {
@@ -55,10 +46,7 @@ builder.Host.UseOrleans((hostBuilder, siloBuilder) =>
         loggingBuilder.AddConsole();
     });
 
-    siloBuilder.UseDashboard(opt =>
-    {
-        opt.HostSelf = true;
-    });
+    siloBuilder.UseDashboard();
 });
 
 var app = builder.Build();
@@ -72,8 +60,6 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
-
-app.Map("/dashboard", x => x.UseOrleansDashboard());
 
 
 // Map HTTP endpoints using minimal API's

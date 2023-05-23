@@ -1,18 +1,17 @@
 using OrleansSnake.Client.Enums;
 using OrleansSnake.Client.Renderers;
 using OrleansSnake.Contracts;
-using Microsoft.AspNetCore.SignalR.Client;
 using Orientation = OrleansSnake.Contracts.Orientation;
+using Timer = System.Windows.Forms.Timer;
 
 namespace OrleansSnake.Client
 {
     internal partial class MainForm : Form
     {
-        private static string SignalRHost = "https://orleanssnake.wonderfulriver-b3bcf300.northeurope.azurecontainerapps.io/ticker";
         private static Color ClearColor = Color.FromArgb(63, 50, 102);
 
+        private readonly Timer _timer = new Timer();
         private readonly Random _random = new();
-        private readonly GameClient _gameClient;
         private bool _closing;
 
         private SnakeGameState _snakeGameState = SnakeGameState.MainMenu;
@@ -37,9 +36,11 @@ namespace OrleansSnake.Client
             }
         }
 
-        public MainForm(GameClient gameClient)
+        public MainForm()
         {
-            _gameClient = gameClient;
+            _timer.Interval = 250;
+            _timer.Tick += Timer_Tick;
+            _timer.Enabled = true;
 
             SetStyle(ControlStyles.AllPaintingInWmPaint, true);
             SetStyle(ControlStyles.DoubleBuffer, true);
@@ -47,63 +48,112 @@ namespace OrleansSnake.Client
             SetStyle(ControlStyles.UserPaint, true);
             SetStyle(ControlStyles.ResizeRedraw, true);
 
-            InitializeComponent();
-        }
-
-        private HubConnection _connection;
-
-        private async void MainForm_Load(object sender, EventArgs e)
-        {
-            SnakeGameState = SnakeGameState.MainMenu;
-
-            _connection = new HubConnectionBuilder()
-                .WithUrl(SignalRHost)
-                .Build();
-
-            _connection.Closed += async (error) =>
+            GameState = new GameState
             {
-                if (!_closing)
+                Width = 24,
+                Height = 14,
+                Players = new List<PlayerState>
                 {
-                    await Task.Delay(_random.Next(0, 5) * 1000);
-                    await _connection.StartAsync();
+                    new PlayerState
+                    {
+                        PlayerName = "Player 1",
+                        IsReady = true,
+                        Snake = new Snake
+                        {
+                            Orientation = Orientation.East,
+                            Coordinates = new List<Coordinates>
+                            {
+                                new Coordinates { X = 2, Y = 2 },
+                                new Coordinates { X = 3, Y = 2 },
+                                new Coordinates { X = 4, Y = 2 },
+                            }
+                        }
+                    }
+                },
+                Food = new Food
+                {
+                    Bites = new List<Bite>
+                    {
+                        new Bite { X = 5, Y = 5 }
+                    }
                 }
             };
 
-            _connection.On<GameState>("ReceiveGameState", gameState =>
+            InitializeComponent();
+        }
+
+        private void Timer_Tick(object? sender, EventArgs e)
+        {
+            if (GameState != null)
             {
-                Invoke(() =>
+                foreach (var playerState in GameState.Players)
                 {
-                    GameState = gameState;
 
-                    playersListBox.Items.Clear();
-                    currentGameCodeLabel.Text = gameState.GameCode;
+                    var snake = playerState.Snake;
 
-                    foreach (var player in gameState.Players)
+                    Func<Coordinates, Coordinates> moveFunc = coordinates => coordinates;
+
+                    switch (snake.Orientation)
                     {
-                        playersListBox.Items.Add($"{player.PlayerName} ({(player.IsReady ? "Ready" : "Not Ready")})");
+                        case Orientation.North:
+                            moveFunc = coordinates =>
+                            {
+                                var newY = coordinates.Y - 1 < 0 ? GameState.Height - 1 : coordinates.Y - 1;
+                                return coordinates with { Y = newY };
+                            };
+
+                            break;
+                        case Orientation.East:
+                            moveFunc = coordinates =>
+                            {
+                                var newX = coordinates.X + 1 >= GameState.Width ? 0 : coordinates.X + 1;
+                                return coordinates with { X = newX };
+                            };
+
+                            break;
+                        case Orientation.South:
+                            moveFunc = coordinates =>
+                            {
+                                var newY = coordinates.Y + 1 >= GameState.Height ? 0 : coordinates.Y + 1;
+                                return coordinates with { Y = newY };
+                            };
+
+                            break;
+                        case Orientation.West:
+                            moveFunc = coordinates =>
+                            {
+                                var newX = coordinates.X - 1 < 0 ? GameState.Width - 1 : coordinates.X - 1;
+                                return coordinates with { X = newX };
+                            };
+
+                            break;
                     }
 
-                    SnakeGameState = gameState.IsReady ? SnakeGameState.Game : SnakeGameState.GameLobby;
-                });
-            });
+                    var newCoordinates = new List<Coordinates>(snake.Coordinates.Count);
 
-            try
-            {
-                while (_connection.State != HubConnectionState.Connected)
-                {
-                    await Task.Delay(1000);
-
-                    try
+                    for (int i = 0; i < snake.Coordinates.Count; i++)
                     {
-                        await _connection.StartAsync();
+                        if (i == 0)
+                        {
+                            newCoordinates.Add(moveFunc(snake.Coordinates[0]));
+                        }
+                        else
+                        {
+                            newCoordinates.Add(snake.Coordinates[i - 1]);
+                        }
                     }
-                    catch { }
+
+                    playerState.Snake = playerState.Snake with { Coordinates = newCoordinates };
+
                 }
             }
-            catch (Exception ex)
-            {
-                Text = ex.Message;
-            }
+
+            Invalidate();
+        }
+
+        private void MainForm_Load(object sender, EventArgs e)
+        {
+            SnakeGameState = SnakeGameState.Game;
         }
 
         private async void MainForm_FormClosing(object sender, FormClosingEventArgs e)
@@ -114,21 +164,13 @@ namespace OrleansSnake.Client
 
                 e.Cancel = true;
 
-                await _connection.StopAsync();
-
-                if (!string.IsNullOrWhiteSpace(currentGameCodeLabel.Text) &&
-                    !string.IsNullOrWhiteSpace(playerNameTextBox.Text))
-                {
-                    await _gameClient.Abandon(currentGameCodeLabel.Text, playerNameTextBox.Text);
-                }
-
                 Close();
             }
         }
 
         private void MainForm_Paint(object sender, PaintEventArgs e)
         {
-            if (SnakeGameState == SnakeGameState.Game)
+            if (SnakeGameState == SnakeGameState.Game && GameState != null)
             {
                 e.Graphics.RenderWorld(ClientRectangle, GameState);
                 e.Graphics.RenderSnakes(ClientRectangle, GameState);
@@ -142,9 +184,9 @@ namespace OrleansSnake.Client
 
         private async void MainForm_KeyDown(object sender, KeyEventArgs e)
         {
-            if (_connection.State == HubConnectionState.Connected && SnakeGameState == SnakeGameState.Game)
+            if (SnakeGameState == SnakeGameState.Game)
             {
-                var currentPlayerState = _gameState.Players.SingleOrDefault(x => x.PlayerName == playerNameTextBox.Text);
+                var currentPlayerState = _gameState.Players.SingleOrDefault(x => x.PlayerName == "Player 1");
                 var currentOrientation = currentPlayerState != null ? currentPlayerState.Snake.Orientation : Orientation.North;
                 var newOrientation = currentOrientation;
 
@@ -180,10 +222,7 @@ namespace OrleansSnake.Client
                         break;
                 }
 
-                if (newOrientation != currentOrientation)
-                {
-                    await _connection.SendAsync("Turn", currentGameCodeLabel.Text, playerNameTextBox.Text, newOrientation);
-                }
+                currentPlayerState.Snake = currentPlayerState.Snake with { Orientation = newOrientation };
             }
         }
 
@@ -201,24 +240,13 @@ namespace OrleansSnake.Client
         {
             var gameCode = string.Empty;
 
-            if (SnakeGameState == SnakeGameState.NewGame)
-            {
-                gameCode = await _gameClient.CreateGame(playerNameTextBox.Text);
-            }
 
-            if (SnakeGameState == SnakeGameState.JoinGame)
-            {
-                gameCode = await _gameClient.JoinGame(gameCodeTextBox.Text, playerNameTextBox.Text);
-            }
-
-            await _connection.SendAsync("JoinGame", gameCode);
 
             SnakeGameState = SnakeGameState.GameLobby;
         }
 
         private async void readyButton_Click(object sender, EventArgs e)
         {
-            await _gameClient.PlayerReady(currentGameCodeLabel.Text, playerNameTextBox.Text);
             readyButton.Visible = false;
         }
 

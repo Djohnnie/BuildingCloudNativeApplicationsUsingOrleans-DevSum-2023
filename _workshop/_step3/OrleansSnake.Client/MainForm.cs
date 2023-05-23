@@ -8,7 +8,7 @@ namespace OrleansSnake.Client
 {
     internal partial class MainForm : Form
     {
-        private static string SignalRHost = "https://orleanssnake.wonderfulriver-b3bcf300.northeurope.azurecontainerapps.io/ticker";
+        private static string SignalRHost = "https://localhost:7243/ticker";
         private static Color ClearColor = Color.FromArgb(63, 50, 102);
 
         private readonly Random _random = new();
