@@ -5,7 +5,7 @@ namespace OrleansSnake.Client;
 
 internal class GameClient
 {
-    private static string Host = "https://localhost:7243";
+    private static string Host = "https://orleanssnake.wonderfulriver-b3bcf300.northeurope.azurecontainerapps.io";
 
     public async Task<string> CreateGame(string hostPlayerName)
     {

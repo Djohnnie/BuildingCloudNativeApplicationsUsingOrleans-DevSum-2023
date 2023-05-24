@@ -8,6 +8,7 @@ internal static class Program
     static void Main()
     {
         var services = new ServiceCollection();
+        services.AddSingleton<GameClient>();
         services.AddSingleton<MainForm>();
         var serviceProvider = services.BuildServiceProvider();
         

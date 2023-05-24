@@ -1,9 +1,12 @@
+using OrleansSnake.Host;
 using OrleansSnake.Host.Helpers;
 using OrleansSnake.Host.Hubs;
+using OrleansSnake.Host.Managers;
 using OrleansSnake.Host.Workers;
+using OrleansSnake.Contracts;
+using Microsoft.AspNetCore.Mvc;
 using Orleans.Configuration;
 using System.Net;
-using OrleansSnake.Host.Grains;
 
 
 // Web Application Builder
@@ -18,9 +21,12 @@ builder.Configuration.AddEnvironmentVariables();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 builder.Services.AddMemoryCache();
+builder.Services.AddSingleton<GameCodeHelper>();
+builder.Services.AddTransient<GameManager>();
+builder.Services.AddTransient<IApiHelper, ApiHelper>();
+builder.Services.AddTransient(typeof(IApiHelper<>), typeof(ApiHelper<>));
 builder.Services.AddSignalR();
 builder.Services.AddSingleton<TickerHub>();
-builder.Services.AddSingleton<GameHelper>();
 builder.Services.AddHostedService<TickerWorker>();
 
 
@@ -58,19 +64,27 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-
-
-// Map Orleans dashboard endpoint
 app.Map("/dashboard", x => x.UseOrleansDashboard());
 
 
 // Map HTTP endpoints using minimal API's
 app.MapGet("/status",
-    (IGrainFactory grainFactory) =>
-    {
-        var statusGrain = grainFactory.GetGrain<IStatusGrain>(Guid.Empty);
-        return statusGrain.GetStatus();
-    });
+    (IApiHelper helper) => helper.Execute());
+
+app.MapPost("/games",
+    (IApiHelper<GameManager> helper, CreateGameRequest request) => helper.Post(l => l.CreateGame(request)));
+
+app.MapPost("/games/{gameCode}/join",
+    (IApiHelper<GameManager> helper, [FromRoute] string gameCode, JoinGameRequest request) => helper.Post(l => l.JoinGame(request with { GameCode = gameCode })));
+
+app.MapPost("/games/{gameCode}/ready/{playerName}",
+    (IApiHelper<GameManager> helper, [FromRoute] string gameCode, [FromRoute] string playerName) => helper.Post(l => l.ReadyPlayer(new ReadyPlayerRequest(gameCode, playerName))));
+
+app.MapPost("/games/{gameCode}/abandon/{playerName}",
+    (IApiHelper<GameManager> helper, [FromRoute] string gameCode, [FromRoute] string playerName) => helper.Post(l => l.Abandon(new AbandonRequest(gameCode, playerName))));
+
+app.MapGet("/games/active",
+    (IApiHelper<GameManager> helper) => helper.Execute(l => l.GetActiveGames()));
 
 
 // Map the SignalR Hub

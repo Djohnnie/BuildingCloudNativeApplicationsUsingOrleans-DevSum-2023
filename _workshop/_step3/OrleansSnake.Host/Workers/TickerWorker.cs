@@ -1,21 +1,55 @@
 ﻿using OrleansSnake.Host.Hubs;
-using OrleansSnake.Host.Managers;
 using OrleansSnake.Contracts;
 using System.Diagnostics;
+using OrleansSnake.Host.Helpers;
 
 namespace OrleansSnake.Host.Workers;
 
 public class TickerWorker : BackgroundService
 {
     private readonly TickerHub _tickerHub;
-    private readonly IServiceScopeFactory _serviceScopeFactory;
+    private readonly GameHelper _gameHelper;
+    private readonly GameState _gameState;
 
     public TickerWorker(
         TickerHub tickerHub,
-        IServiceScopeFactory serviceScopeFactory)
+        GameHelper gameHelper)
     {
         _tickerHub = tickerHub;
-        _serviceScopeFactory = serviceScopeFactory;
+        _gameHelper = gameHelper;
+
+        _gameState = new GameState
+        {
+            Width = 24,
+            Height = 14,
+            Players = new List<PlayerState>
+            {
+                new PlayerState
+                {
+                    PlayerName = "Player 1",
+                    IsReady = true,
+                    Snake = new Snake
+                    {
+                        Orientation = Orientation.East,
+                        Coordinates = new List<Coordinates>
+                        {
+                            new Coordinates { X = 2, Y = 2 },
+                            new Coordinates { X = 3, Y = 2 },
+                            new Coordinates { X = 4, Y = 2 },
+                        }
+                    }
+                }
+            },
+            Food = new Food
+            {
+                Bites = new List<Bite>
+                {
+                    new Bite { X = 5, Y = 5 }
+                }
+            }
+        };
+
+        _gameHelper.SetOrientation(Orientation.East);
     }
 
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -26,31 +60,69 @@ public class TickerWorker : BackgroundService
         {
             var stopWatch = Stopwatch.StartNew();
 
-            using var serviceScope = _serviceScopeFactory.CreateScope();
-            var gameManager = serviceScope.ServiceProvider.GetService<GameManager>();
-            var activeGames = await gameManager.GetActiveGames();
-
-            foreach (var activeGame in activeGames.ActiveGames)
+            foreach (var playerState in _gameState.Players)
             {
-                var isReady = activeGame.IsReady || activeGame.Players.All(x => x.IsReady);
+                var snake = playerState.Snake;
 
-                var gameState = new GameState
+                Func<Coordinates, Coordinates> moveFunc = coordinates => coordinates;
+
+                var orientation = _gameHelper.GetOrientation();
+
+                switch (orientation)
                 {
-                    Width = activeGame.Width,
-                    Height = activeGame.Height,
-                    IsReady = isReady,
-                    GameCode = activeGame.GameCode,
-                    Players = activeGame.Players.Select(x => new PlayerState
-                    {
-                        PlayerName = x.PlayerName,
-                        IsReady = x.IsReady,
-                        Snake = Snake.FromSnakeData(x.SnakeData)
-                    }).ToList(),
-                    Food = Food.FromFoodData(activeGame.FoodData)
-                };
+                    case Orientation.North:
+                        moveFunc = coordinates =>
+                        {
+                            var newY = coordinates.Y - 1 < 0 ? _gameState.Height - 1 : coordinates.Y - 1;
+                            return coordinates with { Y = newY };
+                        };
 
-                await _tickerHub.SendGameState(gameState);
+                        break;
+                    case Orientation.East:
+                        moveFunc = coordinates =>
+                        {
+                            var newX = coordinates.X + 1 >= _gameState.Width ? 0 : coordinates.X + 1;
+                            return coordinates with { X = newX };
+                        };
+
+                        break;
+                    case Orientation.South:
+                        moveFunc = coordinates =>
+                        {
+                            var newY = coordinates.Y + 1 >= _gameState.Height ? 0 : coordinates.Y + 1;
+                            return coordinates with { Y = newY };
+                        };
+
+                        break;
+                    case Orientation.West:
+                        moveFunc = coordinates =>
+                        {
+                            var newX = coordinates.X - 1 < 0 ? _gameState.Width - 1 : coordinates.X - 1;
+                            return coordinates with { X = newX };
+                        };
+
+                        break;
+                }
+
+                var newCoordinates = new List<Coordinates>(snake.Coordinates.Count);
+
+                for (int i = 0; i < snake.Coordinates.Count; i++)
+                {
+                    if (i == 0)
+                    {
+                        newCoordinates.Add(moveFunc(snake.Coordinates[0]));
+                    }
+                    else
+                    {
+                        newCoordinates.Add(snake.Coordinates[i - 1]);
+                    }
+                }
+
+                playerState.Snake = playerState.Snake with { Coordinates = newCoordinates, Orientation = orientation };
+
             }
+
+            await _tickerHub.SendGameState(_gameState);
 
             stopWatch.Stop();
             await Task.Delay(Math.Max(0, 250 - (int)stopWatch.ElapsedMilliseconds), stoppingToken);

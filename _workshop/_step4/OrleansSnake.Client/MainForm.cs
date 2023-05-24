@@ -8,10 +8,11 @@ namespace OrleansSnake.Client
 {
     internal partial class MainForm : Form
     {
-        private static string SignalRHost = "https://localhost:62482/ticker";
+        private static string SignalRHost = "https://orleanssnake.wonderfulriver-b3bcf300.northeurope.azurecontainerapps.io/ticker";
         private static Color ClearColor = Color.FromArgb(63, 50, 102);
 
         private readonly Random _random = new();
+        private readonly GameClient _gameClient;
         private bool _closing;
 
         private SnakeGameState _snakeGameState = SnakeGameState.MainMenu;
@@ -36,8 +37,10 @@ namespace OrleansSnake.Client
             }
         }
 
-        public MainForm()
+        public MainForm(GameClient gameClient)
         {
+            _gameClient = gameClient;
+
             SetStyle(ControlStyles.AllPaintingInWmPaint, true);
             SetStyle(ControlStyles.DoubleBuffer, true);
             SetStyle(ControlStyles.OptimizedDoubleBuffer, true);
@@ -51,7 +54,7 @@ namespace OrleansSnake.Client
 
         private async void MainForm_Load(object sender, EventArgs e)
         {
-            SnakeGameState = SnakeGameState.Game;
+            SnakeGameState = SnakeGameState.MainMenu;
 
             _connection = new HubConnectionBuilder()
                 .WithUrl(SignalRHost)
@@ -71,6 +74,16 @@ namespace OrleansSnake.Client
                 Invoke(() =>
                 {
                     GameState = gameState;
+
+                    playersListBox.Items.Clear();
+                    currentGameCodeLabel.Text = gameState.GameCode;
+
+                    foreach (var player in gameState.Players)
+                    {
+                        playersListBox.Items.Add($"{player.PlayerName} ({(player.IsReady ? "Ready" : "Not Ready")})");
+                    }
+
+                    SnakeGameState = gameState.IsReady ? SnakeGameState.Game : SnakeGameState.GameLobby;
                 });
             });
 
@@ -103,13 +116,19 @@ namespace OrleansSnake.Client
 
                 await _connection.StopAsync();
 
+                if (!string.IsNullOrWhiteSpace(currentGameCodeLabel.Text) &&
+                    !string.IsNullOrWhiteSpace(playerNameTextBox.Text))
+                {
+                    await _gameClient.Abandon(currentGameCodeLabel.Text, playerNameTextBox.Text);
+                }
+
                 Close();
             }
         }
 
         private void MainForm_Paint(object sender, PaintEventArgs e)
         {
-            if (SnakeGameState == SnakeGameState.Game && GameState != null)
+            if (SnakeGameState == SnakeGameState.Game)
             {
                 e.Graphics.RenderWorld(ClientRectangle, GameState);
                 e.Graphics.RenderSnakes(ClientRectangle, GameState);
@@ -125,7 +144,7 @@ namespace OrleansSnake.Client
         {
             if (_connection.State == HubConnectionState.Connected && SnakeGameState == SnakeGameState.Game)
             {
-                var currentPlayerState = _gameState.Players.SingleOrDefault(x => x.PlayerName == "Player 1");
+                var currentPlayerState = _gameState.Players.SingleOrDefault(x => x.PlayerName == playerNameTextBox.Text);
                 var currentOrientation = currentPlayerState != null ? currentPlayerState.Snake.Orientation : Orientation.North;
                 var newOrientation = currentOrientation;
 
@@ -163,7 +182,7 @@ namespace OrleansSnake.Client
 
                 if (newOrientation != currentOrientation)
                 {
-                    await _connection.SendAsync("Turn", newOrientation);
+                    await _connection.SendAsync("Turn", currentGameCodeLabel.Text, playerNameTextBox.Text, newOrientation);
                 }
             }
         }
@@ -182,12 +201,24 @@ namespace OrleansSnake.Client
         {
             var gameCode = string.Empty;
 
+            if (SnakeGameState == SnakeGameState.NewGame)
+            {
+                gameCode = await _gameClient.CreateGame(playerNameTextBox.Text);
+            }
+
+            if (SnakeGameState == SnakeGameState.JoinGame)
+            {
+                gameCode = await _gameClient.JoinGame(gameCodeTextBox.Text, playerNameTextBox.Text);
+            }
+
+            await _connection.SendAsync("JoinGame", gameCode);
 
             SnakeGameState = SnakeGameState.GameLobby;
         }
 
         private async void readyButton_Click(object sender, EventArgs e)
         {
+            await _gameClient.PlayerReady(currentGameCodeLabel.Text, playerNameTextBox.Text);
             readyButton.Visible = false;
         }
 
